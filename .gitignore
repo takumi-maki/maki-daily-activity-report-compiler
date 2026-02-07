@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# AWS SAM
+.aws-sam/
+
+# IDE
+.vscode/
+.idea/
+
+# Dependencies
+*.egg-info/
+dist/
+build/

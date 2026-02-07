@@ -1,0 +1,5 @@
+requests
+slack-sdk
+notion-client
+google-auth
+google-api-python-client
