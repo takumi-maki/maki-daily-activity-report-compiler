@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  DailyReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.11
+      Timeout: 60
+      Environment:
+        Variables:
+          GITHUB_USERNAME: '{{resolve:ssm:/maki-daily-report/GITHUB_USERNAME}}'
+          GOOGLE_CALENDAR_ID: '{{resolve:ssm:/maki-daily-report/GOOGLE_CALENDAR_ID}}'
+          SLACK_USER_ID: '{{resolve:ssm:/maki-daily-report/SLACK_USER_ID}}'
+          NOTION_DATABASE_ID: '{{resolve:ssm:/maki-daily-report/NOTION_DATABASE_ID}}'
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: 'maki-daily-report/*'
+      Events:
+        WeekdaySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 9 ? * MON-FRI *)
+            Description: Run daily report at 18:00 JST on weekdays

@@ -1,11 +1,18 @@
 import os
 import json
 import requests
+import boto3
 from datetime import datetime, timezone, timedelta
 from slack_sdk import WebClient
 from notion_client import Client as NotionClient
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+
+# ---------- SSM ----------
+ssm = boto3.client('ssm')
+
+def get_secret(name):
+    return ssm.get_parameter(Name=f'/maki-daily-report/{name}', WithDecryption=True)['Parameter']['Value']
 
 # ---------- 時刻 ----------
 JST = timezone(timedelta(hours=9))
@@ -14,13 +21,18 @@ start = datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0).iso
 end = datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
 
 # ---------- Clients ----------
-slack = WebClient(token=os.environ["SLACK_TOKEN"])
-notion = NotionClient(auth=os.environ["NOTION_TOKEN"])
+slack = None
+notion = None
+
+def init_clients():
+    global slack, notion
+    slack = WebClient(token=get_secret('SLACK_TOKEN'))
+    notion = NotionClient(auth=get_secret('NOTION_TOKEN'))
 
 # ---------- GitHub ----------
 def fetch_github_activity():
     url = f"https://api.github.com/users/{os.environ['GITHUB_USERNAME']}/events"
-    headers = {"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"}
+    headers = {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}"}
     res = requests.get(url, headers=headers)
     events = res.json()
 
@@ -40,7 +52,7 @@ def fetch_github_activity():
 # ---------- Google Calendar ----------
 def fetch_calendar_events():
     creds = service_account.Credentials.from_service_account_info(
-        json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]),
+        json.loads(get_secret('GOOGLE_SERVICE_ACCOUNT_JSON')),
         scopes=["https://www.googleapis.com/auth/calendar.readonly"],
     )
     service = build("calendar", "v3", credentials=creds)
@@ -67,8 +79,8 @@ def fetch_slack_messages():
         query=f"from:<@{os.environ['SLACK_USER_ID']}> after:{today}"
     )
 
-    matches = result.get("messages", {}).get("matches", [])[:10]
-    lines = [f"- {m['text']}" for m in matches]
+    matches = result.get("messages", {}).get("matches", [])
+    lines = [f"- {m['text']}" for m in matches[:10]]
     return "\n".join(lines) or "なし"
 
 # ---------- Markdown ----------
@@ -110,6 +122,7 @@ def post_to_notion(markdown):
 
 # ---------- Handler ----------
 def lambda_handler(event, context):
+    init_clients()
     github = fetch_github_activity()
     calendar = fetch_calendar_events()
     slack_msg = fetch_slack_messages()
