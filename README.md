@@ -7,7 +7,7 @@
 - **AWS Lambda** - サーバーレス実行環境（Python 3.11）
 - **SAM (AWS Serverless Application Model)** - インフラをコードで定義・デプロイ
 - **SSM Parameter Store** - 環境変数とシークレットの安全な管理
-- **EventBridge** - 平日14:59 UTC（JST 23:59）の定期実行スケジュール
+- **EventBridge** - 平日14:00 UTC（JST 23:00）の定期実行スケジュール
 - **GitHub API** - Public リポジトリの活動取得
 - **Google Calendar API** - カレンダーイベント取得
 - **Slack API** - メッセージ検索
@@ -45,7 +45,7 @@ SSM Parameter Storeに以下のパラメータを登録（`{prefix}` は任意�
 - `/{prefix}/GITHUB_TOKEN` (SecureString) - GitHub Personal Access Token
 - `/{prefix}/GITHUB_USERNAME` (String) - GitHubユーザー名
 - `/{prefix}/GOOGLE_SERVICE_ACCOUNT_JSON` (SecureString) - Google Service Account JSON
-- `/{prefix}/GOOGLE_CALENDAR_ID` (String) - Google Calendar ID
+- `/{prefix}/GOOGLE_CALENDAR_IDS` (String) - Google Calendar IDs（カンマ区切り）
 - `/{prefix}/SLACK_TOKEN` (SecureString) - Slack Bot Token
 - `/{prefix}/SLACK_USER_ID` (String) - Slack User ID
 - `/{prefix}/NOTION_TOKEN` (SecureString) - Notion Integration Token

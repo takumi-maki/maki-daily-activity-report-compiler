@@ -20,11 +20,8 @@ def get_secret(name):
 
 # ---------- 時刻 ----------
 JST = timezone(timedelta(hours=9))
-today = datetime.now(JST).date().isoformat()
-start = datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-end = (
-    datetime.now(JST).replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
-)
+NOTION_BLOCK_LIMIT = 100
+SLACK_TEXT_LIMIT = 300
 
 # ---------- Clients ----------
 slack = None
@@ -37,78 +34,107 @@ def init_clients():
     notion = NotionClient(auth=get_secret("NOTION_TOKEN"))
 
 
+def get_report_window():
+    now_jst = datetime.now(JST)
+    day_start_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_jst = now_jst.replace(hour=23, minute=59, second=59, microsecond=0)
+    return now_jst.date().isoformat(), day_start_jst, day_end_jst
+
+
 # ---------- GitHub ----------
-def fetch_github_activity():
+def fetch_github_activity(today, day_start_jst, day_end_jst):
     url = f"https://api.github.com/users/{os.environ['GITHUB_USERNAME']}/events"
     headers = {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}"}
-    res = requests.get(url, headers=headers)
+    res = requests.get(url, headers=headers, timeout=15)
     print(f"GitHub: ステータスコード = {res.status_code}")
     events = res.json()
     print(f"GitHub: レスポンス = {json.dumps(events)[:200]}")
     print(f"GitHub: 取得イベント数 = {len(events) if isinstance(events, list) else 0}")
     print(f"GitHub: 対象日 = {today}")
 
+    if not isinstance(events, list):
+        return "なし", 0, 0
+
     lines = []
+    matched_events = 0
     for e in events:
         created = e.get("created_at", "")
-        if today in created:
-            print(f"GitHub: マッチ = {e['type']}")
-            if e["type"] == "PushEvent":
-                for c in e["payload"]["commits"]:
-                    lines.append(f"- Commit: {c['message']}")
-            elif e["type"] == "PullRequestEvent":
-                title = e["payload"]["pull_request"]["title"]
-                lines.append(f"- PR: {title}")
+        if not created:
+            continue
+        try:
+            created_jst = datetime.fromisoformat(
+                created.replace("Z", "+00:00")
+            ).astimezone(JST)
+        except ValueError:
+            continue
+        if day_start_jst <= created_jst <= day_end_jst:
+            matched_events += 1
+            event_type = e.get("type", "unknown")
+            print(f"GitHub: マッチ = {event_type} at {created_jst.isoformat()}")
+            if event_type == "PushEvent":
+                for c in e.get("payload", {}).get("commits", []):
+                    lines.append(f"- Commit: {c.get('message', '')}")
+            elif event_type == "PullRequestEvent":
+                title = e.get("payload", {}).get("pull_request", {}).get("title", "")
+                if title:
+                    lines.append(f"- PR: {title}")
 
+    print(f"GitHub: マッチイベント数 = {matched_events}")
     print(f"GitHub: 結果行数 = {len(lines)}")
-    return "\n".join(lines) or "なし"
+    return "\n".join(lines) or "なし", matched_events, len(lines)
 
 
 # ---------- Google Calendar ----------
-def fetch_calendar_events():
+def fetch_calendar_events(day_start_jst, day_end_jst):
     creds = service_account.Credentials.from_service_account_info(
         json.loads(get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")),
         scopes=["https://www.googleapis.com/auth/calendar.readonly"],
     )
     service = build("calendar", "v3", credentials=creds)
 
-    # pylint: disable=no-member
-    events = (
-        service.events()
-        .list(
-            calendarId=os.environ["GOOGLE_CALENDAR_ID"],
-            timeMin=start,
-            timeMax=end,
-            singleEvents=True,
-            orderBy="startTime",
-        )
-        .execute()
-    )
+    calendar_ids = [
+        cid.strip() for cid in os.environ["GOOGLE_CALENDAR_IDS"].split(",") if cid.strip()
+    ]
+    print(f"Calendar: 対象カレンダー = {calendar_ids}")
 
     lines = []
-    for e in events.get("items", []):
-        dt = e["start"].get("dateTime", "")
-        time = dt[11:16] if dt else ""
-        lines.append(f"- {time} {e.get('summary','')}")
+    for calendar_id in calendar_ids:
+        # pylint: disable=no-member
+        events = (
+            service.events()
+            .list(
+                calendarId=calendar_id,
+                timeMin=day_start_jst.isoformat(),
+                timeMax=day_end_jst.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        for e in events.get("items", []):
+            dt = e.get("start", {}).get("dateTime", "")
+            time = dt[11:16] if dt else ""
+            lines.append(f"- {time} {e.get('summary','')}")
 
-    return "\n".join(lines) or "なし"
+    print(f"Calendar: イベント数 = {len(lines)}")
+    return "\n".join(lines) or "なし", len(lines)
 
 
 # ---------- Slack ----------
-def fetch_slack_messages():
-    # Slackの検索は日付をUnixタイムスタンプで指定（JST 0:00基準）
-    after_ts = int(
-        datetime.now(JST)
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-        .timestamp()
+def fetch_slack_messages(today, day_start_jst, day_end_jst):
+    user_id = os.environ["SLACK_USER_ID"]
+    after_date = day_start_jst.strftime("%Y-%m-%d")
+    before_date = (day_start_jst + timedelta(days=1)).strftime("%Y-%m-%d")
+    query = f"from:<@{user_id}> after:{after_date} before:{before_date}"
+
+    print(f"Slack: 対象日(JST) = {today}")
+    print(
+        "Slack: 取得範囲(JST) = "
+        f"{day_start_jst.strftime('%Y-%m-%d %H:%M:%S')} - "
+        f"{day_end_jst.strftime('%Y-%m-%d %H:%M:%S')}"
     )
-    user_id = os.environ['SLACK_USER_ID']
-    query = f"from:<@{user_id}> after:{after_ts}"
-    
-    print(f"Slack: USER_ID = {user_id}")
-    print(f"Slack: after_ts = {after_ts}")
     print(f"Slack: 検索クエリ = {query}")
-    
+
     try:
         result = slack.search_messages(query=query)
         print(f"Slack: APIステータス = {result.get('ok', 'unknown')}")
@@ -122,16 +148,23 @@ def fetch_slack_messages():
         
         if matches:
             print(f"Slack: 最初のメッセージ = {json.dumps(matches[0], ensure_ascii=False)[:300]}")
-        
-        lines = [f"- {m['text']}" for m in matches[:10]]
-        return "\n".join(lines) or "なし"
+
+        lines = []
+        for m in matches[:50]:
+            text = m.get("text", "").replace("\n", " ").strip()
+            if len(text) > SLACK_TEXT_LIMIT:
+                text = f"{text[:SLACK_TEXT_LIMIT]}..."
+            lines.append(f"- {text}")
+
+        print(f"Slack: 出力行数 = {len(lines)}")
+        return "\n".join(lines) or "なし", len(matches), len(lines)
     except Exception as e:
         print(f"Slack: エラー発生 = {type(e).__name__}: {str(e)}")
-        return "なし"
+        return "なし", 0, 0
 
 
 # ---------- Markdown ----------
-def build_markdown(github, calendar, slack_msg):
+def build_markdown(today, github, calendar, slack_msg):
     return f"""# {today} 日報
 
 ## 🛠 実装・作業（GitHub Public）
@@ -148,33 +181,68 @@ def build_markdown(github, calendar, slack_msg):
 
 
 # ---------- Notion ----------
-def post_to_notion(markdown):
-    notion.pages.create(
+def post_to_notion(markdown, today):
+    children = [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": line}}]
+            },
+        }
+        for line in markdown.split("\n")
+    ]
+    total_blocks = len(children)
+    print(f"Notion: 送信予定ブロック数 = {total_blocks}")
+
+    first_chunk = children[:NOTION_BLOCK_LIMIT]
+    page = notion.pages.create(
         parent={"database_id": os.environ["NOTION_DATABASE_ID"]},
         properties={"title": {"title": [{"text": {"content": f"{today} 日報"}}]}},
-        children=[
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"type": "text", "text": {"content": line}}]
-                },
-            }
-            for line in markdown.split("\n")
-        ],
+        children=first_chunk,
     )
+    page_id = page["id"]
+
+    offset = NOTION_BLOCK_LIMIT
+    while offset < total_blocks:
+        chunk = children[offset : offset + NOTION_BLOCK_LIMIT]
+        notion.blocks.children.append(block_id=page_id, children=chunk)
+        print(
+            f"Notion: 追加ブロック {offset + 1}-{offset + len(chunk)} / {total_blocks}"
+        )
+        offset += NOTION_BLOCK_LIMIT
 
 
 # ---------- Handler ----------
 def lambda_handler(event, context):
+    today, day_start_jst, day_end_jst = get_report_window()
     print(f"=== 日報作成開始: {today} ===")
-    init_clients()
-    github = fetch_github_activity()
-    calendar = fetch_calendar_events()
-    slack_msg = fetch_slack_messages()
+    github_line_count = 0
+    github_event_count = 0
+    slack_match_count = 0
+    notion_block_count = 0
+    try:
+        init_clients()
+        github, github_event_count, github_line_count = fetch_github_activity(
+            today, day_start_jst, day_end_jst
+        )
+        calendar, _ = fetch_calendar_events(day_start_jst, day_end_jst)
+        slack_msg, slack_match_count, _ = fetch_slack_messages(
+            today, day_start_jst, day_end_jst
+        )
 
-    md = build_markdown(github, calendar, slack_msg)
-    post_to_notion(md)
-    print("=== Notion投稿完了 ===")
-
-    return {"statusCode": 200, "body": "OK"}
+        md = build_markdown(today, github, calendar, slack_msg)
+        notion_block_count = len(md.split("\n"))
+        print(
+            f"Metrics: github_events={github_event_count}, github_lines={github_line_count}, "
+            f"slack_matches={slack_match_count}, notion_blocks={notion_block_count}"
+        )
+        post_to_notion(md, today)
+        print("=== Notion投稿完了 ===")
+        return {"statusCode": 200, "body": "OK"}
+    except Exception:
+        print(
+            f"FailureMetrics: github_events={github_event_count}, github_lines={github_line_count}, "
+            f"slack_matches={slack_match_count}, notion_blocks={notion_block_count}"
+        )
+        raise
