@@ -22,5 +22,5 @@ Resources:
         WeekdaySchedule:
           Type: Schedule
           Properties:
-            Schedule: cron(0 9 ? * MON-FRI *)
-            Description: Run daily report at 18:00 JST on weekdays
+            Schedule: cron(59 14 ? * MON-FRI *)
+            Description: Run daily report at 23:59 JST on weekdays

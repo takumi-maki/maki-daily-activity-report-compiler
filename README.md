@@ -7,7 +7,7 @@
 - **AWS Lambda** - サーバーレス実行環境（Python 3.11）
 - **SAM (AWS Serverless Application Model)** - インフラをコードで定義・デプロイ
 - **SSM Parameter Store** - 環境変数とシークレットの安全な管理
-- **EventBridge** - 平日9:00（JST 18:00）の定期実行スケジュール
+- **EventBridge** - 平日14:59 UTC（JST 23:59）の定期実行スケジュール
 - **GitHub API** - Public リポジトリの活動取得
 - **Google Calendar API** - カレンダーイベント取得
 - **Slack API** - メッセージ検索
