@@ -180,14 +180,14 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
         if matches:
             print(f"Slack: 最初のメッセージ = {json.dumps(matches[0], ensure_ascii=False)[:300]}")
 
-        # チャンネルごとにグループ化
+        # チャンネルごとにグループ化（タイムスタンプ付き）
         channels = {}
         for m in matches[:50]:
             channel_name = m.get("channel", {}).get("name", "unknown")
             text = m.get("text", "").replace("\n", " ").strip()
+            ts = m.get("ts", "")
             
             # デバッグ: メッセージの日付をログ出力
-            ts = m.get("ts", "")
             if ts:
                 msg_date = datetime.fromtimestamp(float(ts), tz=JST).strftime("%Y-%m-%d %H:%M:%S")
                 print(f"Slack: メッセージ日時 = {msg_date}")
@@ -197,14 +197,16 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
             
             if channel_name not in channels:
                 channels[channel_name] = []
-            channels[channel_name].append(text)
+            channels[channel_name].append({"ts": float(ts) if ts else 0, "text": text})
 
-        # チャンネルごとにフォーマット
+        # チャンネルごとにフォーマット（時系列順にソート）
         lines = []
-        for channel_name, texts in channels.items():
+        for channel_name, messages in channels.items():
+            # タイムスタンプで昇順ソート
+            messages.sort(key=lambda x: x["ts"])
             lines.append(f"\n### {channel_name}")
-            for text in texts:
-                lines.append(f"- {text}")
+            for msg in messages:
+                lines.append(f"- {msg['text']}")
 
         print(f"Slack: 出力行数 = {len(lines)}")
         return "\n".join(lines) or "なし", len(matches), len(lines)
