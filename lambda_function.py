@@ -322,22 +322,55 @@ def build_markdown(today, github, calendar, slack_msg, boki_learning=""):
 
 
 # ---------- Notion ----------
+def line_to_block(line):
+    """Markdown行をNotion Blockに変換"""
+    line = line.strip()
+    
+    if not line:
+        return None
+    
+    # 2000文字制限チェック
+    def truncate(text):
+        return text[:1997] + "..." if len(text) > 2000 else text
+    
+    if line.startswith("# "):
+        return {
+            "object": "block",
+            "type": "heading_1",
+            "heading_1": {"rich_text": [{"type": "text", "text": {"content": truncate(line[2:])}}]}
+        }
+    elif line.startswith("## "):
+        return {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": truncate(line[3:])}}]}
+        }
+    elif line.startswith("### "):
+        return {
+            "object": "block",
+            "type": "heading_3",
+            "heading_3": {"rich_text": [{"type": "text", "text": {"content": truncate(line[4:])}}]}
+        }
+    elif line.startswith("- "):
+        return {
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": truncate(line[2:])}}]}
+        }
+    else:
+        return {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": truncate(line)}}]}
+        }
+
+
 def post_to_notion(markdown, today):
     children = []
     for line in markdown.split("\n"):
-        # 空行はスキップ
-        if not line.strip():
-            continue
-        # Notionのrich_textは2000文字制限
-        if len(line) > 2000:
-            line = line[:1997] + "..."
-        children.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": line}}]
-            },
-        })
+        block = line_to_block(line)
+        if block:
+            children.append(block)
     
     total_blocks = len(children)
     print(f"Notion: 送信予定ブロック数 = {total_blocks}")
