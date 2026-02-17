@@ -21,7 +21,7 @@ def get_secret(name):
 # ---------- 時刻 ----------
 JST = timezone(timedelta(hours=9))
 NOTION_BLOCK_LIMIT = 100
-SLACK_TEXT_LIMIT = 300
+SLACK_TEXT_LIMIT = 150
 
 # ---------- Clients ----------
 slack = None
@@ -213,35 +213,130 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
         return "⚠️ 取得エラー（ログ参照）", 0, 0
 
 
+# ---------- Notion Boki Learning ----------
+def fetch_boki_learning(day_start_jst, day_end_jst):
+    try:
+        boki_db_id = os.environ.get("NOTION_BOKI_DATABASE_ID")
+        if not boki_db_id:
+            print("Boki: NOTION_BOKI_DATABASE_IDが設定されていません")
+            return ""
+        
+        print(f"Boki: 対象DB = {boki_db_id}")
+        print(f"Boki: 取得範囲(JST) = {day_start_jst.isoformat()} ~ {day_end_jst.isoformat()}")
+        
+        # Notion APIでデータベースをクエリ
+        response = notion.data_sources.query(
+            data_source_id=boki_db_id,
+            filter={
+                "and": [
+                    {
+                        "property": "作成日時",
+                        "created_time": {
+                            "on_or_after": day_start_jst.isoformat()
+                        }
+                    },
+                    {
+                        "property": "作成日時",
+                        "created_time": {
+                            "on_or_before": day_end_jst.isoformat()
+                        }
+                    },
+                    {
+                        "property": "時間(m)",
+                        "number": {
+                            "greater_than": 0
+                        }
+                    }
+                ]
+            },
+            sorts=[{"property": "作成日時", "direction": "descending"}],
+            page_size=1
+        )
+        
+        results = response.get("results", [])
+        print(f"Boki: 取得件数 = {len(results)}")
+        
+        if not results:
+            return ""
+        
+        page = results[0]
+        props = page.get("properties", {})
+        
+        # 「やったこと」取得
+        title_prop = props.get("やったこと", {})
+        title_list = title_prop.get("rich_text", [])
+        title = title_list[0].get("plain_text", "") if title_list else ""
+        
+        # 「時間(m)」取得
+        time_prop = props.get("時間(m)", {})
+        time_minutes = time_prop.get("number", 0)
+        
+        # 「理解したこと」取得
+        memo_prop = props.get("理解したこと", {})
+        memo_list = memo_prop.get("rich_text", [])
+        memo = memo_list[0].get("plain_text", "") if memo_list else ""
+        
+        print(f"Boki: タイトル = {title}")
+        print(f"Boki: 時間 = {time_minutes}分")
+        print(f"Boki: メモ = {memo[:50]}...")
+        
+        # Markdown生成
+        lines = []
+        lines.append(f"- {title}（{time_minutes}分）")
+        if memo:
+            lines.append(f"- 理解したこと：{memo}")
+        
+        return "\n".join(lines)
+        
+    except Exception as e:
+        print(f"Boki: エラー発生 = {type(e).__name__}: {str(e)}")
+        return ""
+
+
 # ---------- Markdown ----------
-def build_markdown(today, github, calendar, slack_msg):
-    return f"""# {today} 日報
-
-## 🛠 実装・作業（GitHub Public）
-{github}
-
-## 🗓 時間の使い方（Calendar）
-{calendar}
-
-## 💬 思考・議論（Slack）
-{slack_msg}
-
-## 🧠 今日の学び（手書き1行）
-"""
+def build_markdown(today, github, calendar, slack_msg, boki_learning=""):
+    sections = []
+    sections.append(f"# {today} 日報")
+    sections.append("")
+    sections.append("## 🛠 実装・作業（GitHub Public）")
+    sections.append(github)
+    sections.append("")
+    sections.append("## 🗓 時間の使い方（Calendar）")
+    sections.append(calendar)
+    sections.append("")
+    sections.append("## 💬 思考・議論（Slack）")
+    sections.append(slack_msg)
+    
+    # 簿記学習ログがあれば追加
+    if boki_learning:
+        sections.append("")
+        sections.append("## 📚 学習（簿記3級）")
+        sections.append(boki_learning)
+    
+    sections.append("")
+    sections.append("## 🧠 今日の学び（手書き1行）")
+    
+    return "\n".join(sections)
 
 
 # ---------- Notion ----------
 def post_to_notion(markdown, today):
-    children = [
-        {
+    children = []
+    for line in markdown.split("\n"):
+        # 空行はスキップ
+        if not line.strip():
+            continue
+        # Notionのrich_textは2000文字制限
+        if len(line) > 2000:
+            line = line[:1997] + "..."
+        children.append({
             "object": "block",
             "type": "paragraph",
             "paragraph": {
                 "rich_text": [{"type": "text", "text": {"content": line}}]
             },
-        }
-        for line in markdown.split("\n")
-    ]
+        })
+    
     total_blocks = len(children)
     print(f"Notion: 送信予定ブロック数 = {total_blocks}")
 
@@ -280,8 +375,9 @@ def lambda_handler(event, context):
         slack_msg, slack_match_count, _ = fetch_slack_messages(
             today, day_start_jst, day_end_jst
         )
+        boki_learning = fetch_boki_learning(day_start_jst, day_end_jst)
 
-        md = build_markdown(today, github, calendar, slack_msg)
+        md = build_markdown(today, github, calendar, slack_msg, boki_learning)
         notion_block_count = len(md.split("\n"))
         print(
             f"Metrics: github_events={github_event_count}, github_lines={github_line_count}, "
