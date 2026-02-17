@@ -43,87 +43,117 @@ def get_report_window():
 
 # ---------- GitHub ----------
 def fetch_github_activity(today, day_start_jst, day_end_jst):
-    url = f"https://api.github.com/users/{os.environ['GITHUB_USERNAME']}/events"
-    headers = {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}"}
-    res = requests.get(url, headers=headers, timeout=15)
-    print(f"GitHub: ステータスコード = {res.status_code}")
-    events = res.json()
-    print(f"GitHub: レスポンス = {json.dumps(events)[:200]}")
-    print(f"GitHub: 取得イベント数 = {len(events) if isinstance(events, list) else 0}")
-    print(f"GitHub: 対象日 = {today}")
+    try:
+        url = f"https://api.github.com/users/{os.environ['GITHUB_USERNAME']}/events"
+        headers = {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}"}
+        res = requests.get(url, headers=headers, timeout=15)
+        print(f"GitHub: ステータスコード = {res.status_code}")
+        events = res.json()
+        print(f"GitHub: レスポンス = {json.dumps(events)[:200]}")
+        print(f"GitHub: 取得イベント数 = {len(events) if isinstance(events, list) else 0}")
+        print(f"GitHub: 対象日 = {today}")
 
-    if not isinstance(events, list):
-        return "なし", 0, 0
+        if not isinstance(events, list):
+            return "なし", 0, 0
 
-    lines = []
-    matched_events = 0
-    for e in events:
-        created = e.get("created_at", "")
-        if not created:
-            continue
-        try:
-            created_jst = datetime.fromisoformat(
-                created.replace("Z", "+00:00")
-            ).astimezone(JST)
-        except ValueError:
-            continue
-        if day_start_jst <= created_jst <= day_end_jst:
-            matched_events += 1
-            event_type = e.get("type", "unknown")
-            print(f"GitHub: マッチ = {event_type} at {created_jst.isoformat()}")
-            if event_type == "PushEvent":
-                for c in e.get("payload", {}).get("commits", []):
-                    lines.append(f"- Commit: {c.get('message', '')}")
-            elif event_type == "PullRequestEvent":
-                title = e.get("payload", {}).get("pull_request", {}).get("title", "")
-                if title:
-                    lines.append(f"- PR: {title}")
+        lines = []
+        matched_events = 0
+        for e in events:
+            created = e.get("created_at", "")
+            if not created:
+                continue
+            try:
+                created_jst = datetime.fromisoformat(
+                    created.replace("Z", "+00:00")
+                ).astimezone(JST)
+            except ValueError:
+                continue
+            if day_start_jst <= created_jst <= day_end_jst:
+                matched_events += 1
+                event_type = e.get("type", "unknown")
+                print(f"GitHub: マッチ = {event_type} at {created_jst.isoformat()}")
+                if event_type == "PushEvent":
+                    payload = e.get("payload", {})
+                    commits = payload.get("commits", [])
+                    print(f"GitHub: commits数 = {len(commits)}")
+                    for c in commits:
+                        lines.append(f"- Commit: {c.get('message', '')}")
+                elif event_type == "PullRequestEvent":
+                    title = e.get("payload", {}).get("pull_request", {}).get("title", "")
+                    if title:
+                        lines.append(f"- PR: {title}")
 
-    print(f"GitHub: マッチイベント数 = {matched_events}")
-    print(f"GitHub: 結果行数 = {len(lines)}")
-    return "\n".join(lines) or "なし", matched_events, len(lines)
+        print(f"GitHub: マッチイベント数 = {matched_events}")
+        print(f"GitHub: 結果行数 = {len(lines)}")
+        return "\n".join(lines) or "なし", matched_events, len(lines)
+    except Exception as e:
+        print(f"GitHub: エラー発生 = {type(e).__name__}: {str(e)}")
+        return "⚠️ 取得エラー（ログ参照）", 0, 0
 
 
 # ---------- Google Calendar ----------
 def fetch_calendar_events(day_start_jst, day_end_jst):
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")),
-        scopes=["https://www.googleapis.com/auth/calendar.readonly"],
-    )
-    service = build("calendar", "v3", credentials=creds)
-
-    calendar_ids = [
-        cid.strip() for cid in os.environ["GOOGLE_CALENDAR_IDS"].split(",") if cid.strip()
-    ]
-    print(f"Calendar: 対象カレンダー = {calendar_ids}")
-
-    lines = []
-    for calendar_id in calendar_ids:
-        # pylint: disable=no-member
-        events = (
-            service.events()
-            .list(
-                calendarId=calendar_id,
-                timeMin=day_start_jst.isoformat(),
-                timeMax=day_end_jst.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-            )
-            .execute()
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")),
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
         )
-        for e in events.get("items", []):
-            dt = e.get("start", {}).get("dateTime", "")
-            time = dt[11:16] if dt else ""
-            lines.append(f"- {time} {e.get('summary','')}")
+        service = build("calendar", "v3", credentials=creds)
 
-    print(f"Calendar: イベント数 = {len(lines)}")
-    return "\n".join(lines) or "なし", len(lines)
+        calendar_ids = [
+            cid.strip() for cid in os.environ["GOOGLE_CALENDAR_IDS"].split(",") if cid.strip()
+        ]
+        print(f"Calendar: 対象カレンダー = {calendar_ids}")
+
+        # 全カレンダーのイベントを集約
+        all_events = []
+        for calendar_id in calendar_ids:
+            try:
+                # pylint: disable=no-member
+                events = (
+                    service.events()
+                    .list(
+                        calendarId=calendar_id,
+                        timeMin=day_start_jst.isoformat(),
+                        timeMax=day_end_jst.isoformat(),
+                        singleEvents=True,
+                        orderBy="startTime",
+                    )
+                    .execute()
+                )
+                for e in events.get("items", []):
+                    dt = e.get("start", {}).get("dateTime", "")
+                    if dt:
+                        all_events.append({
+                            "datetime": dt,
+                            "summary": e.get("summary", "")
+                        })
+            except Exception as e:
+                print(f"Calendar: {calendar_id} 取得エラー = {type(e).__name__}: {str(e)}")
+                continue
+
+        # 時刺順にソート
+        all_events.sort(key=lambda x: x["datetime"])
+
+        # フォーマット
+        lines = []
+        for event in all_events:
+            time = event["datetime"][11:16]
+            lines.append(f"- {time} {event['summary']}")
+
+        print(f"Calendar: イベント数 = {len(lines)}")
+        return "\n".join(lines) or "なし", len(lines)
+    except Exception as e:
+        print(f"Calendar: エラー発生 = {type(e).__name__}: {str(e)}")
+        return "⚠️ 取得エラー（ログ参照）", 0
 
 
 # ---------- Slack ----------
 def fetch_slack_messages(today, day_start_jst, day_end_jst):
     user_id = os.environ["SLACK_USER_ID"]
-    after_date = day_start_jst.strftime("%Y-%m-%d")
+    
+    # デバッグ: 日付範囲を広げてテスト
+    after_date = (day_start_jst - timedelta(days=7)).strftime("%Y-%m-%d")
     before_date = (day_start_jst + timedelta(days=1)).strftime("%Y-%m-%d")
     query = f"from:<@{user_id}> after:{after_date} before:{before_date}"
 
@@ -133,6 +163,7 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
         f"{day_start_jst.strftime('%Y-%m-%d %H:%M:%S')} - "
         f"{day_end_jst.strftime('%Y-%m-%d %H:%M:%S')}"
     )
+    print(f"Slack: デバッグ検索範囲 = {after_date} ~ {before_date} (7日間)")
     print(f"Slack: 検索クエリ = {query}")
 
     try:
@@ -149,18 +180,37 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
         if matches:
             print(f"Slack: 最初のメッセージ = {json.dumps(matches[0], ensure_ascii=False)[:300]}")
 
-        lines = []
+        # チャンネルごとにグループ化
+        channels = {}
         for m in matches[:50]:
+            channel_name = m.get("channel", {}).get("name", "unknown")
             text = m.get("text", "").replace("\n", " ").strip()
+            
+            # デバッグ: メッセージの日付をログ出力
+            ts = m.get("ts", "")
+            if ts:
+                msg_date = datetime.fromtimestamp(float(ts), tz=JST).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"Slack: メッセージ日時 = {msg_date}")
+            
             if len(text) > SLACK_TEXT_LIMIT:
                 text = f"{text[:SLACK_TEXT_LIMIT]}..."
-            lines.append(f"- {text}")
+            
+            if channel_name not in channels:
+                channels[channel_name] = []
+            channels[channel_name].append(text)
+
+        # チャンネルごとにフォーマット
+        lines = []
+        for channel_name, texts in channels.items():
+            lines.append(f"\n### {channel_name}")
+            for text in texts:
+                lines.append(f"- {text}")
 
         print(f"Slack: 出力行数 = {len(lines)}")
         return "\n".join(lines) or "なし", len(matches), len(lines)
     except Exception as e:
         print(f"Slack: エラー発生 = {type(e).__name__}: {str(e)}")
-        return "なし", 0, 0
+        return "⚠️ 取得エラー（ログ参照）", 0, 0
 
 
 # ---------- Markdown ----------
