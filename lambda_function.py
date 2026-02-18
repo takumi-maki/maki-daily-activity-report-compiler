@@ -44,48 +44,58 @@ def get_report_window():
 # ---------- GitHub ----------
 def fetch_github_activity(today, day_start_jst, day_end_jst):
     try:
-        url = f"https://api.github.com/users/{os.environ['GITHUB_USERNAME']}/events"
+        username = os.environ['GITHUB_USERNAME']
         headers = {"Authorization": f"Bearer {get_secret('GITHUB_TOKEN')}"}
-        res = requests.get(url, headers=headers, timeout=15)
-        print(f"GitHub: ステータスコード = {res.status_code}")
-        events = res.json()
-        print(f"GitHub: レスポンス = {json.dumps(events)[:200]}")
-        print(f"GitHub: 取得イベント数 = {len(events) if isinstance(events, list) else 0}")
+        
+        # ユーザーのリポジトリ一覧を取得
+        repos_url = f"https://api.github.com/users/{username}/repos?type=owner&sort=pushed&per_page=10"
+        repos_res = requests.get(repos_url, headers=headers, timeout=15)
+        print(f"GitHub: リポジトリ取得ステータス = {repos_res.status_code}")
+        
+        repos = repos_res.json() if repos_res.status_code == 200 else []
+        print(f"GitHub: リポジトリ数 = {len(repos) if isinstance(repos, list) else 0}")
         print(f"GitHub: 対象日 = {today}")
-
-        if not isinstance(events, list):
+        
+        if not isinstance(repos, list):
             return "なし", 0, 0
-
+        
         lines = []
-        matched_events = 0
-        for e in events:
-            created = e.get("created_at", "")
-            if not created:
+        total_commits = 0
+        
+        # 各リポジトリのコミットを確認
+        for repo in repos[:5]:  # 最新5リポジトリのみ
+            repo_name = repo.get("full_name", "")
+            if not repo_name:
                 continue
-            try:
-                created_jst = datetime.fromisoformat(
-                    created.replace("Z", "+00:00")
-                ).astimezone(JST)
-            except ValueError:
+            
+            # コミット履歴を取得（対象日のみ）
+            commits_url = f"https://api.github.com/repos/{repo_name}/commits"
+            params = {
+                "author": username,
+                "since": day_start_jst.isoformat(),
+                "until": day_end_jst.isoformat(),
+                "per_page": 30
+            }
+            commits_res = requests.get(commits_url, headers=headers, params=params, timeout=15)
+            
+            if commits_res.status_code != 200:
                 continue
-            if day_start_jst <= created_jst <= day_end_jst:
-                matched_events += 1
-                event_type = e.get("type", "unknown")
-                print(f"GitHub: マッチ = {event_type} at {created_jst.isoformat()}")
-                if event_type == "PushEvent":
-                    payload = e.get("payload", {})
-                    commits = payload.get("commits", [])
-                    print(f"GitHub: commits数 = {len(commits)}")
-                    for c in commits:
-                        lines.append(f"- Commit: {c.get('message', '')}")
-                elif event_type == "PullRequestEvent":
-                    title = e.get("payload", {}).get("pull_request", {}).get("title", "")
-                    if title:
-                        lines.append(f"- PR: {title}")
-
-        print(f"GitHub: マッチイベント数 = {matched_events}")
+            
+            commits = commits_res.json()
+            if not isinstance(commits, list) or len(commits) == 0:
+                continue
+            
+            print(f"GitHub: {repo_name} のコミット数 = {len(commits)}")
+            total_commits += len(commits)
+            
+            for commit in commits:
+                commit_data = commit.get("commit", {})
+                message = commit_data.get("message", "").split("\n")[0]  # 1行目のみ
+                lines.append(f"- [{repo.get('name', repo_name)}] {message}")
+        
+        print(f"GitHub: 合計コミット数 = {total_commits}")
         print(f"GitHub: 結果行数 = {len(lines)}")
-        return "\n".join(lines) or "なし", matched_events, len(lines)
+        return "\n".join(lines) or "なし", total_commits, len(lines)
     except Exception as e:
         print(f"GitHub: エラー発生 = {type(e).__name__}: {str(e)}")
         return "⚠️ 取得エラー（ログ参照）", 0, 0
