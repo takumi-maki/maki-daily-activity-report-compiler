@@ -163,12 +163,13 @@ def fetch_calendar_events(day_start_jst, day_end_jst):
 # ---------- Slack ----------
 def fetch_slack_messages_common(client, user_id, today, day_start_jst, day_end_jst, label="Slack"):
     """Slackメッセージ取得の共通処理"""
-    after_date = day_start_jst.strftime("%Y-%m-%d")
+    # Slack APIのafterは「その日を含まない」ので前日を指定
+    after_date = (day_start_jst - timedelta(days=1)).strftime("%Y-%m-%d")
     before_date = (day_start_jst + timedelta(days=1)).strftime("%Y-%m-%d")
     query = f"from:<@{user_id}> after:{after_date} before:{before_date}"
 
     print(f"{label}: 対象日(JST) = {today}")
-    print(f"{label}: 検索範囲 = {after_date} ~ {before_date}")
+    print(f"{label}: 検索範囲 = after:{after_date} before:{before_date}")
     print(f"{label}: 検索クエリ = {query}")
 
     try:
