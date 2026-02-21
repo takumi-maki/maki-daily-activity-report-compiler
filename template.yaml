@@ -14,6 +14,7 @@ Resources:
           GITHUB_USERNAME: '{{resolve:ssm:/maki-daily-report/GITHUB_USERNAME}}'
           GOOGLE_CALENDAR_IDS: '{{resolve:ssm:/maki-daily-report/GOOGLE_CALENDAR_IDS}}'
           SLACK_USER_ID: '{{resolve:ssm:/maki-daily-report/SLACK_USER_ID}}'
+          SLACK_HIMAPRO_USER_ID: '{{resolve:ssm:/maki-daily-report/SLACK_HIMAPRO_USER_ID}}'
           NOTION_DATABASE_ID: '{{resolve:ssm:/maki-daily-report/NOTION_DATABASE_ID}}'
           NOTION_BOKI_DATABASE_ID: '{{resolve:ssm:/maki-daily-report/NOTION_BOKI_DATABASE_ID}}'
       Policies:

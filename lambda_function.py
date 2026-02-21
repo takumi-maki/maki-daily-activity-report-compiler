@@ -25,12 +25,14 @@ SLACK_TEXT_LIMIT = 150
 
 # ---------- Clients ----------
 slack = None
+slack_himapro = None
 notion = None
 
 
 def init_clients():
-    global slack, notion
+    global slack, slack_himapro, notion
     slack = WebClient(token=get_secret("SLACK_TOKEN"))
+    slack_himapro = WebClient(token=get_secret("SLACK_HIMAPRO_TOKEN"))
     notion = NotionClient(auth=get_secret("NOTION_TOKEN"))
 
 
@@ -159,36 +161,20 @@ def fetch_calendar_events(day_start_jst, day_end_jst):
 
 
 # ---------- Slack ----------
-def fetch_slack_messages(today, day_start_jst, day_end_jst):
-    user_id = os.environ["SLACK_USER_ID"]
-    
-    # デバッグ: 日付範囲を広げてテスト
-    after_date = (day_start_jst - timedelta(days=7)).strftime("%Y-%m-%d")
+def fetch_slack_messages_common(client, user_id, today, day_start_jst, day_end_jst, label="Slack"):
+    """Slackメッセージ取得の共通処理"""
+    after_date = day_start_jst.strftime("%Y-%m-%d")
     before_date = (day_start_jst + timedelta(days=1)).strftime("%Y-%m-%d")
     query = f"from:<@{user_id}> after:{after_date} before:{before_date}"
 
-    print(f"Slack: 対象日(JST) = {today}")
-    print(
-        "Slack: 取得範囲(JST) = "
-        f"{day_start_jst.strftime('%Y-%m-%d %H:%M:%S')} - "
-        f"{day_end_jst.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    print(f"Slack: デバッグ検索範囲 = {after_date} ~ {before_date} (7日間)")
-    print(f"Slack: 検索クエリ = {query}")
+    print(f"{label}: 対象日(JST) = {today}")
+    print(f"{label}: 検索範囲 = {after_date} ~ {before_date}")
+    print(f"{label}: 検索クエリ = {query}")
 
     try:
-        result = slack.search_messages(query=query)
-        print(f"Slack: APIステータス = {result.get('ok', 'unknown')}")
-        print(f"Slack: レスポンス全体 = {json.dumps(result.data, ensure_ascii=False)[:1000]}")
-        
-        messages = result.get("messages", {})
-        print(f"Slack: messagesキー = {messages.keys() if messages else 'None'}")
-        
-        matches = messages.get("matches", [])
-        print(f"Slack: マッチ数 = {len(matches)}")
-        
-        if matches:
-            print(f"Slack: 最初のメッセージ = {json.dumps(matches[0], ensure_ascii=False)[:300]}")
+        result = client.search_messages(query=query)
+        matches = result.get("messages", {}).get("matches", [])
+        print(f"{label}: マッチ数 = {len(matches)}")
 
         # チャンネルごとにグループ化（タイムスタンプ付き）
         channels = {}
@@ -196,11 +182,6 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
             channel_name = m.get("channel", {}).get("name", "unknown")
             text = m.get("text", "").replace("\n", " ").strip()
             ts = m.get("ts", "")
-            
-            # デバッグ: メッセージの日付をログ出力
-            if ts:
-                msg_date = datetime.fromtimestamp(float(ts), tz=JST).strftime("%Y-%m-%d %H:%M:%S")
-                print(f"Slack: メッセージ日時 = {msg_date}")
             
             if len(text) > SLACK_TEXT_LIMIT:
                 text = f"{text[:SLACK_TEXT_LIMIT]}..."
@@ -212,17 +193,33 @@ def fetch_slack_messages(today, day_start_jst, day_end_jst):
         # チャンネルごとにフォーマット（時系列順にソート）
         lines = []
         for channel_name, messages in channels.items():
-            # タイムスタンプで昇順ソート
             messages.sort(key=lambda x: x["ts"])
             lines.append(f"\n### {channel_name}")
             for msg in messages:
                 lines.append(f"- {msg['text']}")
 
-        print(f"Slack: 出力行数 = {len(lines)}")
-        return "\n".join(lines) or "なし", len(matches), len(lines)
+        print(f"{label}: 出力行数 = {len(lines)}")
+        return "\n".join(lines) or "", len(matches), len(lines)
     except Exception as e:
-        print(f"Slack: エラー発生 = {type(e).__name__}: {str(e)}")
-        return "⚠️ 取得エラー（ログ参照）", 0, 0
+        print(f"{label}: エラー発生 = {type(e).__name__}: {str(e)}")
+        return "", 0, 0
+
+
+def fetch_slack_messages(today, day_start_jst, day_end_jst):
+    user_id = os.environ["SLACK_USER_ID"]
+    result, matches, lines = fetch_slack_messages_common(
+        slack, user_id, today, day_start_jst, day_end_jst, "Slack"
+    )
+    return result or "なし", matches, lines
+
+
+# ---------- Slack Himapro ----------
+def fetch_slack_messages_himapro(today, day_start_jst, day_end_jst):
+    user_id = os.environ["SLACK_HIMAPRO_USER_ID"]
+    result, matches, _ = fetch_slack_messages_common(
+        slack_himapro, user_id, today, day_start_jst, day_end_jst, "Himapro Slack"
+    )
+    return result, matches
 
 
 # ---------- Notion Boki Learning ----------
@@ -306,7 +303,7 @@ def fetch_boki_learning(day_start_jst, day_end_jst):
 
 
 # ---------- Markdown ----------
-def build_markdown(today, github, calendar, slack_msg, boki_learning=""):
+def build_markdown(today, github, calendar, slack_msg, boki_learning="", himapro_slack=""):
     sections = []
     sections.append(f"# {today} 日報")
     sections.append("")
@@ -318,6 +315,12 @@ def build_markdown(today, github, calendar, slack_msg, boki_learning=""):
     sections.append("")
     sections.append("## 💬 思考・議論（Slack）")
     sections.append(slack_msg)
+    
+    # Himapro Slackがあれば追加
+    if himapro_slack:
+        sections.append("")
+        sections.append("## 🎙 Himapro")
+        sections.append(himapro_slack)
     
     # 簿記学習ログがあれば追加
     if boki_learning:
@@ -420,9 +423,12 @@ def lambda_handler(event, context):
         slack_msg, slack_match_count, _ = fetch_slack_messages(
             today, day_start_jst, day_end_jst
         )
+        himapro_slack, himapro_count = fetch_slack_messages_himapro(
+            today, day_start_jst, day_end_jst
+        )
         boki_learning = fetch_boki_learning(day_start_jst, day_end_jst)
 
-        md = build_markdown(today, github, calendar, slack_msg, boki_learning)
+        md = build_markdown(today, github, calendar, slack_msg, boki_learning, himapro_slack)
         notion_block_count = len(md.split("\n"))
         print(
             f"Metrics: github_events={github_event_count}, github_lines={github_line_count}, "
