@@ -27,8 +27,8 @@ Resources:
               - ssm:GetParameters
             Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/maki-daily-report/*'
       Events:
-        WeekdaySchedule:
+        DailySchedule:
           Type: Schedule
           Properties:
-            Schedule: cron(0 14 ? * MON-FRI *)
-            Description: Run daily report at 23:00 JST on weekdays
+            Schedule: cron(0 14 ? * * *)
+            Description: Run daily report at 23:00 JST every day
