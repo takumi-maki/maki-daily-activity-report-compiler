@@ -306,8 +306,6 @@ def fetch_boki_learning(day_start_jst, day_end_jst):
 # ---------- Markdown ----------
 def build_markdown(today, github, calendar, slack_msg, boki_learning="", himapro_slack=""):
     sections = []
-    sections.append(f"# {today} 日報")
-    sections.append("")
     sections.append("## 🛠 実装・作業（GitHub Public）")
     sections.append(github)
     sections.append("")
