@@ -284,7 +284,7 @@ def fetch_boki_learning(day_start_jst, day_end_jst):
         # 「理解したこと」取得
         memo_prop = props.get("理解したこと", {})
         memo_list = memo_prop.get("rich_text", [])
-        memo = memo_list[0].get("plain_text", "") if memo_list else ""
+        memo = memo_list[0].get("plain_text", "").replace("\n", " / ") if memo_list else ""
         
         print(f"Boki: タイトル = {title}")
         print(f"Boki: 時間 = {time_minutes}分")
