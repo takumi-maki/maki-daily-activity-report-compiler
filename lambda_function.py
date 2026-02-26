@@ -327,9 +327,6 @@ def build_markdown(today, github, calendar, slack_msg, boki_learning="", himapro
         sections.append("## 📚 学習（簿記3級）")
         sections.append(boki_learning)
     
-    sections.append("")
-    sections.append("## 🧠 今日の学び（手書き1行）")
-    
     return "\n".join(sections)
 
 
